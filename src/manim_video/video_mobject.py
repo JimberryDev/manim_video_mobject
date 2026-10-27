@@ -31,6 +31,9 @@ class VideoStatus:
     exhausted: bool = False
     closed: bool = False
 
+    # Advance shared playback only once per scene timestamp
+    last_scene_time: float | None = None
+
     # Share source audio and its open interval with copied mobjects
     audio: AudioSegment | None = None
     audio_recording: bool = False
@@ -263,13 +266,39 @@ class VideoMobject(ImageMobject):
 
         return remaining_ms / (1000 * self.speed)
 
-    def video_updater(self, mobj, dt):
-        # Skip paused or closed playback without decoding another frame
-        status = mobj.status
-        if dt <= 0 or mobj.speed == 0 or status.closed:
+    def _sync_video_frame(self):
+        # Display the shared frame using this object's image operations
+        frame = self.status.current_frame
+        if frame is None:
             return
+
+        img = self._frame_image(frame)
+        self.pixel_array = change_to_rgba_array(
+            np.asarray(img), self.pixel_array_dtype
+        )
+
+    def video_updater(self, mobj, dt):
+        status = mobj.status
+
+        # Display the shared final frame even if another copy closed the decoder
+        if status.closed:
+            mobj._sync_video_frame()
+            return
+
+        # Skip playback when no time advances or speed is zero
+        if dt <= 0 or mobj.speed == 0:
+            return
+
         if not isfinite(mobj.speed) or mobj.speed < 0:
             raise ValueError("speed must be finite and nonnegative")
+
+        # Later copies display the current frame without advancing playback again
+        scene_time = mobj.scene.time
+        if status.last_scene_time == scene_time:
+            mobj._sync_video_frame()
+            return
+
+        status.last_scene_time = scene_time
 
         # Start audio (idempotent) when playback advances
         if (
@@ -297,7 +326,6 @@ class VideoMobject(ImageMobject):
 
         # Keep the end exclusive while still decoding the final interval frame
         sample_time = np.nextafter(end_ms, -np.inf) if finished else next_time
-        previous_frame = status.current_frame
         frame = mobj._read_frame(sample_time, seek=seek)
         status.time = next_time
 
@@ -316,12 +344,8 @@ class VideoMobject(ImageMobject):
             status.time = min(status.time, mobj._playback_end_ms)
             finished = not mobj.loop and status.time >= mobj._playback_end_ms
 
-        # Convert pixels only when playback selects a different decoded frame
-        if frame is not None and frame is not previous_frame:
-            img = mobj._frame_image(frame)
-            mobj.pixel_array = change_to_rgba_array(
-                np.asarray(img), mobj.pixel_array_dtype
-            )
+        # Display the frame selected by this update
+        mobj._sync_video_frame()
 
         # Commit audio
         if finished:

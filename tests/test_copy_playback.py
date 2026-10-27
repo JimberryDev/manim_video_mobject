@@ -8,7 +8,7 @@ from manim_video import VideoMobject
 class CopyPlaybackTest(Scene):
     def construct(self):
         # Locate the source video relative to this test file
-        path = Path(__file__).resolve().parents[1] / "res" / "Hilbert floor.mp4"
+        path = Path(__file__).resolve().parents[1] / "src" / "res" / "Hilbert floor.mp4"
 
         # Prepare two independent decoders at the same source position
         left = VideoMobject(path, scene=self, silent=False)
@@ -19,7 +19,7 @@ class CopyPlaybackTest(Scene):
         # Measure source advancement during two scene seconds
         self.add(left, right)
         self.wait(2, frozen_frame=False)
-        print("Independent:", left.status.time / 1000, right.status.time / 1000)
+        print(f"Independent: {left.status.time / 1000:.3f} {right.status.time / 1000:.3f}")
 
         # Remove and close both independent decoders
         self.remove(left, right)
@@ -34,7 +34,7 @@ class CopyPlaybackTest(Scene):
         # Repeat the same wait with the shared playback clock
         self.add(left, right)
         self.wait(2, frozen_frame=False)
-        print("Copied:", left.status.time / 1000, right.status.time / 1000)
+        print(f"Copied: {left.status.time / 1000:.3f} {right.status.time / 1000:.3f}")
         print("Shared status:", left.status is right.status)
 
         # Remove both views before closing their shared decoder

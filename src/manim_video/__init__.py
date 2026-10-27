@@ -1,6 +1,6 @@
 # Expose the reusable classes at package level
 from .mc_video import McVideo
-from .slide_play_internal_fix import Fix
+from .scene_play_internal_fix import Fix
 from .tile_animation import TileAnimation, TileOrder
 from .video_mobject import VideoMobject, VideoStatus
 
