@@ -2,7 +2,9 @@ from collections.abc import Callable
 from itertools import pairwise
 
 import numpy as np
-from manim import DL, Animation, Camera, Group, ImageMobject, LaggedStart
+from manim import DL, Animation, Camera, Group, ImageMobject, LaggedStart, Vector3D
+
+from .block_mapper import BlockMapper
 
 
 def grid_edges(size: int, tile_size: int, origin: int) -> list[int]:
@@ -102,6 +104,24 @@ class TileOrder:
         # Return the same tiles in their animation order
         return Group(*sorted(tiles, key=sort_key))
 
+    @staticmethod
+    def distance_from_point(point: Vector3D) -> Callable[[Group], Group]:
+        # Store the reference position when creating the callback
+        origin = np.array(point, dtype=float).copy()
+
+        def order(tiles: Group) -> Group:
+            # Measure distance and angle from the supplied scene position
+            def sort_key(tile):
+                offset = tile.get_center() - origin
+                distance = np.linalg.norm(offset[:2])
+                angle = np.arctan2(offset[1], offset[0])
+                return distance, -angle
+
+            # Return the same tiles ordered nearest first
+            return Group(*sorted(tiles, key=sort_key))
+
+        return order
+
 
 class TileAnimation(LaggedStart):
     """Apply staggered animations to crops of an image.
@@ -110,6 +130,9 @@ class TileAnimation(LaggedStart):
     ----------
     image
         Source image whose current pixels are copied into tiles
+        A BlockMapper supplies its wrapped image, block size, and grid origin
+        When a mapper is supplied, its grid overrides tile_width,
+        tile_height, and grid_origin
     animation_factory
         Function receiving each tile and returning its animation
     tile_width, tile_height
@@ -141,7 +164,7 @@ class TileAnimation(LaggedStart):
 
     def __init__(
         self,
-        image: ImageMobject,
+        image: ImageMobject | BlockMapper,
         animation_factory: Callable[[ImageMobject], Animation],
         tile_width: int = 128,
         tile_height: int = 128,
@@ -154,6 +177,12 @@ class TileAnimation(LaggedStart):
         camera: Camera | None = None,
         **kwargs,
     ):
+        # Use the mapper's image and measured block grid when supplied
+        if isinstance(image, BlockMapper):
+            tile_width = tile_height = image.get_block_size_px()
+            grid_origin = image.get_origin_px()
+            image = image.image
+
         # Prepare image crops before constructing their transitions
         self.image = image
         self.restore_original = restore_original

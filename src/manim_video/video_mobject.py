@@ -531,7 +531,7 @@ class VideoMobject(ImageMobject):
             close_at_end=self.close_at_end,
             ignore_transparent=self._use_visible_bounds,
         )
-    
+
         # Close the previous playback resources before adopting the fresh decoder
         self.close()
         fresh.status.audio = self.status.audio
@@ -539,10 +539,10 @@ class VideoMobject(ImageMobject):
         self._stream_start = fresh._stream_start
         self.duration_ms = fresh.duration_ms
         self._playback_end_ms = fresh._playback_end_ms
-    
+
         # Refresh through this object's frame conversion, including subclass behavior
         self._sync_video_frame()
-    
+
         # Attach this object's updater and resume playback
         self.add_updater(self.video_updater)
         self.resume_updating()
@@ -653,25 +653,49 @@ class VideoMobject(ImageMobject):
             # Carry the remaining source time into the next pass
             next_time -= duration_ms
 
-    def crop(self, left: int, right: int, top: int, bottom: int) -> VideoMobject:
-        # Keep existing image operations before cropping each frame
+
+    def crop(self, left: int, top: int, right: int, bottom: int) -> VideoMobject:
+        """Crop to absolute pixel bounds while preserving retained content placement.
+
+        Coordinates refer to the current image after existing image operations.
+        Right and bottom are exclusive. Updates the displayed image immediately.
+        Return self for chaining.
+        """
+        # Require a nonempty rectangle inside the current image
+        height, width = self.pixel_array.shape[:2]
+        if not (0 <= left < right <= width and 0 <= top < bottom <= height):
+            raise ValueError(
+                "Crop bounds must define a nonempty rectangle inside the image"
+            )
+
+        # Find the retained corners before changing the pixel dimensions
+        points = np.array(
+            [
+                self.pixel_to_point(left, top),
+                self.pixel_to_point(right, top),
+                self.pixel_to_point(left, bottom),
+                self.pixel_to_point(right, bottom),
+            ]
+        )
+
+        # Keep existing image operations before cropping future frames
         previous_imageops = self.imageops
 
         def cropped_imageops(image):
-            # chain the previous imageops and this one: newops(prevops())
             if previous_imageops is not None:
                 image = previous_imageops(image)
-            return image.crop(
-                (
-                    left,
-                    top,
-                    image.width - right,
-                    image.height - bottom,
-                )
-            )
+            return image.crop((left, top, right, bottom))
 
-        # Apply the crop whenever the decoder presents a frame
+        # Crop the displayed pixels and their original alpha without changing opacity
+        pixels = self.pixel_array[top:bottom, left:right].copy()
+        original_alpha = self.orig_alpha_pixel_array[top:bottom, left:right].copy()
+
+        # Adopt the crop while keeping retained pixels at their original scene positions
         self.imageops = cropped_imageops
+        self.pixel_array = pixels
+        self.orig_alpha_pixel_array = original_alpha
+        self.set_points(points)
+
         return self
 
     def pause(self, recursive: bool = True):

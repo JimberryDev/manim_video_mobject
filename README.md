@@ -49,6 +49,8 @@ speed. Speed changes also change audio pitch.
 
 `video.restart()` returns to the selected start.
 
+`video.crop(left, top, right, bottom)` crops future frames to absolute pixel bounds after existing image operations. Coordinates start at the top-left; right and bottom are exclusive. Returns the video for chaining.
+
 
 Always call `video.close()` after removing it from the scene, and close
 remaining videos before the scene ends. Manim does not notify objects
