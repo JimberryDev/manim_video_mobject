@@ -5,10 +5,11 @@ from manim import LEFT, RIGHT, Scene
 from manim_video import VideoMobject
 
 
-class CopyPlaybackTest(Scene):
+class CopiesTest(Scene):
     def construct(self):
         # Locate the source video relative to this test file
-        path = Path(__file__).resolve().parents[1] / "src" / "res" / "Hilbert floor.mp4"
+        path = Path(__file__).resolve().parent / "res" / "Hilbert floor.mp4"
+        
 
         # Prepare two independent decoders at the same source position
         left = VideoMobject(path, scene=self, silent=False)

@@ -21,8 +21,7 @@ def make_image_tiles(
     """Crop source pixels, optionally snapping geometry to a fixed Cairo camera."""
     # Require whole pixels for tile sizes and grid alignment
     if any(
-        not isinstance(value, int) or value <= 0
-        for value in (tile_width, tile_height)
+        not isinstance(value, int) or value <= 0 for value in (tile_width, tile_height)
     ):
         raise ValueError("Tile dimensions must be positive integers")
 
@@ -42,19 +41,19 @@ def make_image_tiles(
     downward = lower_left - upper_left
 
     # Calculate each shared grid intersection once before assigning tile corners
-    grid_points = np.array([
-        upper_left + across * (x / width) + downward * (y / height)
-        for y in y_edges
-        for x in x_edges
-    ])
+    grid_points = np.array(
+        [
+            upper_left + across * (x / width) + downward * (y / height)
+            for y in y_edges
+            for x in x_edges
+        ]
+    )
 
     # Snap final positions to output pixels without changing the source crops
     if camera is not None:
         screen_points = camera.points_to_subpixel_coords(image, grid_points)
         adjustment = np.rint(screen_points) - screen_points
-        grid_points[:, 0] += (
-            adjustment[:, 0] * camera.frame_width / camera.pixel_width
-        )
+        grid_points[:, 0] += adjustment[:, 0] * camera.frame_width / camera.pixel_width
         grid_points[:, 1] -= (
             adjustment[:, 1] * camera.frame_height / camera.pixel_height
         )
@@ -70,12 +69,16 @@ def make_image_tiles(
             tile.set_z_index(image.z_index)
 
             # Match Manim's image corner order when mapping pixels to the scene
-            tile.set_points(np.array([
-                grid_points[row, column],
-                grid_points[row, column + 1],
-                grid_points[row + 1, column],
-                grid_points[row + 1, column + 1],
-            ]))
+            tile.set_points(
+                np.array(
+                    [
+                        grid_points[row, column],
+                        grid_points[row, column + 1],
+                        grid_points[row + 1, column],
+                        grid_points[row + 1, column + 1],
+                    ]
+                )
+            )
             tiles.add(tile)
 
     return tiles
@@ -157,17 +160,18 @@ class TileAnimation(LaggedStart):
         self.tiles = make_image_tiles(
             image, tile_width, tile_height, grid_origin, camera=camera
         )
-        
-
 
         # Keep tiles with more than ten percent visible pixels
         if ignore_empty:
-            self.tiles = Group(*(
-                tile
-                for tile in self.tiles
-                if np.count_nonzero(tile.pixel_array[:, :, 3] > 0)
-                / tile.pixel_array[:, :, 3].size > 0.1
-            ))
+            self.tiles = Group(
+                *(
+                    tile
+                    for tile in self.tiles
+                    if np.count_nonzero(tile.pixel_array[:, :, 3] > 0)
+                    / tile.pixel_array[:, :, 3].size
+                    > 0.1
+                )
+            )
 
         # Apply the caller's tile order before building transitions
         if tile_order is not None:

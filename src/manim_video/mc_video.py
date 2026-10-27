@@ -1,5 +1,4 @@
 import numpy as np
-from manim import ImageMobject
 from manim.typing import Vector3D
 
 from .video_mobject import VideoMobject
@@ -49,15 +48,12 @@ class McVideo(VideoMobject):
             **kwargs,
         )
 
-        # Enable visible bounds after Manim finishes sizing the full image
-        self._use_visible_bounds = True
-
         # Resolve the reference line and measure the grid in the initial frame
         try:
             reference_row, reference_column = self._resolve_reference(
                 reference_row, reference_column
             )
-            self._origin_px, self._tile_size_px = self._measure_grid(
+            self._origin_px, self._block_size_px = self._measure_grid(
                 reference_row, reference_column, reference_blocks
             )
         except Exception:
@@ -129,93 +125,35 @@ class McVideo(VideoMobject):
 
         # Include both endpoint pixels and divide the span into square blocks
         span = int(positions[-1] - positions[0] + 1)
-        tile_size = round(span / blocks)
-        if tile_size < 1:
-            raise ValueError("The measured tile size is less than one pixel")
+        block_size = round(span / blocks)
+        if block_size < 1:
+            raise ValueError("The measured block size is less than one pixel")
 
-        return origin, tile_size
-
-    # Parent groups use raw child points for some bounds calculations
-    # These visible bounds apply directly to McVideo, not to those group calculations
-    def get_points_defining_boundary(self):
-        # Use normal bounds while Manim prepares the image geometry
-        if not getattr(self, "_use_visible_bounds", False):
-            return super().get_points_defining_boundary()
-
-        # Find the current frame's visible rows and columns
-        visible = self.pixel_array[:, :, 3] > 0
-        rows = np.flatnonzero(visible.any(axis=1))
-        columns = np.flatnonzero(visible.any(axis=0))
-
-        # Anchor a fully transparent frame at the full image's center
-        if rows.size == 0:
-            boundary = self.points.mean(axis=0, keepdims=True)
-        else:
-            # Include the outer boundaries of the visible pixels
-            left, right = columns[0], columns[-1] + 1
-            top, bottom = rows[0], rows[-1] + 1
-
-            # Map the visible rectangle onto the displayed image
-            boundary = np.array(
-                [
-                    self.pixel_to_point(left, top),
-                    self.pixel_to_point(right, top),
-                    self.pixel_to_point(left, bottom),
-                    self.pixel_to_point(right, bottom),
-                ]
-            )
-
-        # Include attached labels and other child objects
-        return np.concatenate(
-            [
-                boundary,
-                *(child.get_points_defining_boundary() for child in self.submobjects),
-            ]
-        )
-
-    def reduce_across_dimension(self, reduce_func, dim):
-        # Preserve normal sizing while Manim prepares the image geometry
-        if not getattr(self, "_use_visible_bounds", False):
-            return super().reduce_across_dimension(reduce_func, dim)
-
-        # Measure the requested axis using the same visible bounds
-        points = self.get_points_defining_boundary()
-        return reduce_func(points[:, dim])
-
-    def pixel_to_point(self, x: float, y: float) -> Vector3D:
-        # Map pixel boundaries onto the current image geometry
-        height, width = self.pixel_array.shape[:2]
-        upper_left, upper_right, lower_left, _ = self.points
-
-        return (
-            upper_left
-            + (upper_right - upper_left) * (x / width)
-            + (lower_left - upper_left) * (y / height)
-        )
+        return origin, block_size
 
     def get_origin_px(self) -> tuple[int, int]:
         # Return the stored bottom-left grid intersection as (x, y)
         return self._origin_px
 
-    def get_tile_size_px(self) -> int:
+    def get_block_size_px(self) -> int:
         # Return the stored square block size in pixels
-        return self._tile_size_px
+        return self._block_size_px
 
     def get_origin_manim(self) -> Vector3D:
         # Map the stored pixel origin onto the current image geometry
         return self.pixel_to_point(*self.get_origin_px())
 
-    def get_tile_size_manim(self) -> float:
+    def get_block_size_manim(self) -> float:
         # Measure one block along the current image's horizontal edge
         x, y = self.get_origin_px()
         start = self.pixel_to_point(x, y)
-        end = self.pixel_to_point(x + self.get_tile_size_px(), y)
+        end = self.pixel_to_point(x + self.get_block_size_px(), y)
         return float(np.linalg.norm(end - start))
 
     def get_block_center(self, x: int, y: int) -> Vector3D:
         # Find the block center, with block Y increasing upward
         origin_x, origin_y = self.get_origin_px()
-        size = self.get_tile_size_px()
+        size = self.get_block_size_px()
 
         # Map the center onto the current image geometry
         return self.pixel_to_point(
@@ -223,35 +161,14 @@ class McVideo(VideoMobject):
             origin_y - (y + 0.5) * size,
         )
 
-    def get_block(self, x, y) -> ImageMobject:
+    def get_block(self, x, y) -> VideoMobject:
         # Find the block boundaries, with block Y increasing upward
         origin_x, origin_y = self.get_origin_px()
-        size = self.get_tile_size_px()
+        size = self.get_block_size_px()
 
         left = origin_x + x * size
         right = left + size
         bottom = origin_y - y * size
         top = bottom - size
 
-        # Copy the current frame's block pixels
-        pixels = self.pixel_array[top:bottom, left:right].copy()
-        return ImageMobject(pixels)
-
-    def crop(self, left: int, right: int, top: int, bottom: int) -> VideoMobject:
-        # Keep existing image operations before cropping each frame
-        previous_imageops = self.imageops
-
-        def cropped_imageops(image):
-            # chain the previous imageops and this one: newops(prevops())
-            if previous_imageops is not None:
-                image = previous_imageops(image)
-            return image.crop((
-                left,
-                top,
-                image.width - right,
-                image.height - bottom,
-            ))
-
-        # Apply the crop whenever the decoder presents a frame
-        self.imageops = cropped_imageops
-        return self
+        return self.clone().crop(left, right, top, bottom)

@@ -6,17 +6,9 @@ from typing import override
 
 import av
 import numpy as np
-from manim import (
-    DL,
-    UL,
-    UR,
-    Group,
-    ImageMobject,
-    Scene,
-    SurroundingRectangle,
-    change_to_rgba_array,
-)
-from PIL import Image, ImageOps
+from manim import ImageMobject, Scene, change_to_rgba_array
+from manim.typing import Vector3D
+from PIL import Image
 from pydub import AudioSegment
 
 
@@ -76,6 +68,10 @@ class VideoMobject(ImageMobject):
         Defaults to True and leaves the final image visible
         Looping playback keeps the decoder open
 
+    ignore_transparent
+        Ignore transparent padding when calculating positions and dimensions
+        Defaults to True and leaves all source pixels intact
+
     Notes
     -----
     remaining_time() returns seconds until the current pass ends
@@ -101,6 +97,7 @@ class VideoMobject(ImageMobject):
         start_time=0.0,
         end_time=None,
         close_at_end: bool = True,
+        ignore_transparent: bool = True,
         **kwargs,
     ):
         # Validate the interval and forward playback speed
@@ -164,6 +161,9 @@ class VideoMobject(ImageMobject):
                 raise ValueError("No video frame is available at start_time")
 
             super().__init__(self._frame_image(frame), **kwargs)
+
+            # Ignore transparent padding in bounds after initial image sizing
+            self._use_visible_bounds = ignore_transparent
         except Exception:
             container.close()
             self.status.closed = True
@@ -172,10 +172,124 @@ class VideoMobject(ImageMobject):
         # Advance playback whenever Manim updates this mobject
         self.add_updater(self.video_updater)
 
+    # Parent groups use raw child points for some bounds calculations
+    # These visible bounds apply directly to VideoMobject, not to those group calculations
+    def get_points_defining_boundary(self):
+        # Use normal bounds while Manim prepares the image geometry
+        if not getattr(self, "_use_visible_bounds", False):
+            return super().get_points_defining_boundary()
+
+        # Find the current frame's visible rows and columns
+        visible = self.pixel_array[:, :, 3] > 0
+        rows = np.flatnonzero(visible.any(axis=1))
+        columns = np.flatnonzero(visible.any(axis=0))
+
+        # Anchor a fully transparent frame at the full image's center
+        if rows.size == 0:
+            boundary = self.points.mean(axis=0, keepdims=True)
+        else:
+            # Include the outer boundaries of the visible pixels
+            left, right = columns[0], columns[-1] + 1
+            top, bottom = rows[0], rows[-1] + 1
+
+            # Map the visible rectangle onto the displayed image
+            boundary = np.array(
+                [
+                    self.pixel_to_point(left, top),
+                    self.pixel_to_point(right, top),
+                    self.pixel_to_point(left, bottom),
+                    self.pixel_to_point(right, bottom),
+                ]
+            )
+
+        # Include attached labels and other child objects
+        return np.concatenate(
+            [
+                boundary,
+                *(child.get_points_defining_boundary() for child in self.submobjects),
+            ]
+        )
+
+    def reduce_across_dimension(self, reduce_func, dim):
+        # Preserve normal sizing while Manim prepares the image geometry
+        if not getattr(self, "_use_visible_bounds", False):
+            return super().reduce_across_dimension(reduce_func, dim)
+
+        # Measure the requested axis using the same visible bounds
+        points = self.get_points_defining_boundary()
+        return reduce_func(points[:, dim])
+
+    def pixel_to_point(self, x: float, y: float) -> Vector3D:
+        # Map pixel boundaries onto the current image geometry
+        height, width = self.pixel_array.shape[:2]
+        upper_left, upper_right, lower_left, _ = self.points
+
+        return (
+            upper_left
+            + (upper_right - upper_left) * (x / width)
+            + (lower_left - upper_left) * (y / height)
+        )
+
     def __deepcopy__(self, memo):
         # Keep copied videos attached to the original scene
         memo[id(self.scene)] = self.scene
         return super().__deepcopy__(memo)
+
+    def clone(self) -> "VideoMobject":
+        """Copy this video with independent decoding and playback state."""
+        # Copy geometry, attached objects, and subclass-specific attributes
+        cloned = self.copy()
+
+        # Open an independent decoder without loading the same audio again
+        fresh = VideoMobject(
+            file_path=self.file_path,
+            scene=self.scene,
+            imageops=self.imageops,
+            silent=True,
+            speed=self.speed,
+            loop=self.loop,
+            start_time=self.start_ms / 1000,
+            end_time=None if self.end_ms is None else self.end_ms / 1000,
+            close_at_end=self.close_at_end,
+            ignore_transparent=self._use_visible_bounds,
+        )
+
+        try:
+            # Decode the current position, keeping the video endpoint exclusive
+            position = self.status.time
+            sample_time = position
+            if fresh._playback_end_ms is not None:
+                sample_time = min(
+                    sample_time,
+                    np.nextafter(fresh._playback_end_ms, -np.inf),
+                )
+
+            frame = fresh._read_frame(sample_time, seek=True)
+            if frame is None:
+                raise ValueError("No video frame is available at the cloned position")
+
+            # Reuse source audio while keeping interval tracking independent
+            fresh.status.time = position
+            fresh.status.audio = self.status.audio
+        except Exception:
+            fresh.close()
+            raise
+
+        # Replace the shared status without closing the original decoder
+        cloned.status = fresh.status
+        cloned._stream_start = fresh._stream_start
+        cloned.duration_ms = fresh.duration_ms
+        cloned._playback_end_ms = fresh._playback_end_ms
+
+        # Attach playback even when the original had removed its updater on close
+        cloned.remove_updater(cloned.video_updater)
+        cloned.add_updater(cloned.video_updater)
+
+        # Keep a closed original's clone paused until explicitly played
+        if self.status.closed:
+            cloned.suspend_updating()
+
+        return cloned
 
     @property
     def speed(self) -> float:
@@ -273,9 +387,7 @@ class VideoMobject(ImageMobject):
             return
 
         img = self._frame_image(frame)
-        self.pixel_array = change_to_rgba_array(
-            np.asarray(img), self.pixel_array_dtype
-        )
+        self.pixel_array = change_to_rgba_array(np.asarray(img), self.pixel_array_dtype)
 
     def video_updater(self, mobj, dt):
         status = mobj.status
@@ -453,7 +565,9 @@ class VideoMobject(ImageMobject):
             return
 
         # Store both clocks in seconds to match Manim's audio timeline
-        self.status.audio_scene_start = self.scene.time if scene_time is None else scene_time
+        self.status.audio_scene_start = (
+            self.scene.time if scene_time is None else scene_time
+        )
         self.status.audio_source_start = source_start
 
         # Store speed because rounding makes calculating it from elapsed times unreliable
@@ -475,7 +589,9 @@ class VideoMobject(ImageMobject):
             return
 
         # Select the source samples consumed during this interval
-        start_sample = round(self.status.audio_source_start * self.status.audio.frame_rate)
+        start_sample = round(
+            self.status.audio_source_start * self.status.audio.frame_rate
+        )
         end_sample = round(source_end * self.status.audio.frame_rate)
         segment = self.status.audio.get_sample_slice(start_sample, end_sample)
 
@@ -511,7 +627,8 @@ class VideoMobject(ImageMobject):
             # Place the next pass directly after the current audio interval
             next_audio_start = (
                 self.status.audio_scene_start
-                + (end_ms / 1000 - self.status.audio_source_start) / self.status.audio_speed
+                + (end_ms / 1000 - self.status.audio_source_start)
+                / self.status.audio_speed
             )
 
             # Commit through the loop end and begin again at the loop start
@@ -523,6 +640,27 @@ class VideoMobject(ImageMobject):
 
             # Carry the remaining source time into the next pass
             next_time -= duration_ms
+
+    def crop(self, left: int, right: int, top: int, bottom: int) -> VideoMobject:
+        # Keep existing image operations before cropping each frame
+        previous_imageops = self.imageops
+
+        def cropped_imageops(image):
+            # chain the previous imageops and this one: newops(prevops())
+            if previous_imageops is not None:
+                image = previous_imageops(image)
+            return image.crop(
+                (
+                    left,
+                    top,
+                    image.width - right,
+                    image.height - bottom,
+                )
+            )
+
+        # Apply the crop whenever the decoder presents a frame
+        self.imageops = cropped_imageops
+        return self
 
     def pause(self, recursive: bool = True):
         """Alias for suspend_updating"""
@@ -544,31 +682,5 @@ class VideoMobject(ImageMobject):
         self._start_audio()
         return result
 
-
-class UsageExample(Scene):
-    def construct(self):
-        video1 = (
-            VideoMobject(
-                file_path=("video1.mp4"),
-                scene=self,
-                speed=1.0,
-            )
-            .scale_to_fit_width(5)
-            .to_corner(UL)
-        )
-        video2 = (
-            VideoMobject(
-                file_path=("video2.mkv"),
-                scene=self,
-                speed=3.0,
-                loop=True,
-                imageops=ImageOps.mirror,
-            )
-            .scale_to_fit_width(5)
-            .to_corner(UR)
-        )
-        v1 = Group(video1, SurroundingRectangle(video1))
-        v2 = Group(video2, SurroundingRectangle(video2))
-        self.add(v1, v2)
-        self.wait(2)
-        self.play(v2.animate.shift(3 * DL), run_time=6)
+    def get_current_frame(self) -> ImageMobject:
+        return
