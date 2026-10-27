@@ -169,6 +169,11 @@ class VideoMobject(ImageMobject):
         # Advance playback whenever Manim updates this mobject
         self.add_updater(self.video_updater)
 
+    def __deepcopy__(self, memo):
+        # Keep copied videos attached to the original scene
+        memo[id(self.scene)] = self.scene
+        return super().__deepcopy__(memo)
+
     @property
     def speed(self) -> float:
         return self._speed
@@ -543,4 +548,3 @@ class UsageExample(Scene):
         self.add(v1, v2)
         self.wait(2)
         self.play(v2.animate.shift(3 * DL), run_time=6)
-        self.next_slide()

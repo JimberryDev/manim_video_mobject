@@ -1,5 +1,5 @@
 [project]
-name = "manim-video-support"
+name = "manim-video"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
@@ -10,6 +10,7 @@ requires-python = ">=3.14"
 dependencies = [
     "av>=19.0.2",
     "manim>=0.22.0",
+    "pillow<13",
     "pydub>=0.25.1",
 ]
 
