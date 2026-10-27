@@ -235,7 +235,7 @@ class VideoMobject(ImageMobject):
         memo[id(self.scene)] = self.scene
         return super().__deepcopy__(memo)
 
-    def clone(self) -> "VideoMobject":
+    def clone(self) -> VideoMobject:
         """Copy this video with independent decoding and playback state."""
         # Copy geometry, attached objects, and subclass-specific attributes
         cloned = self.copy()
@@ -387,7 +387,15 @@ class VideoMobject(ImageMobject):
             return
 
         img = self._frame_image(frame)
-        self.pixel_array = change_to_rgba_array(np.asarray(img), self.pixel_array_dtype)
+        self.pixel_array = change_to_rgba_array(np.array(img), self.pixel_array_dtype)
+
+        # Keep the current frame's unmodified transparency for opacity changes
+        self.orig_alpha_pixel_array = self.pixel_array[:, :, 3].copy()
+
+        # Preserve this object's opacity when new video pixels arrive
+        self.pixel_array[:, :, 3] = (
+            self.orig_alpha_pixel_array * self.stroke_opacity
+        ).astype(self.pixel_array_dtype)
 
     def video_updater(self, mobj, dt):
         status = mobj.status
@@ -492,8 +500,13 @@ class VideoMobject(ImageMobject):
 
         # Replace the image while preserving geometry and attached children
         img = self._frame_image(frame)
-        self.pixel_array = change_to_rgba_array(np.asarray(img), self.pixel_array_dtype)
+        self.pixel_array = change_to_rgba_array(np.array(img), self.pixel_array_dtype)
         self.orig_alpha_pixel_array = self.pixel_array[:, :, 3].copy()
+
+        # Preserve opacity when seeking replaces the displayed frame
+        self.pixel_array[:, :, 3] = (
+            self.orig_alpha_pixel_array * self.stroke_opacity
+        ).astype(self.pixel_array_dtype)
         self.status.time = target_ms
 
         # Restore playback and start audio from the new source position
@@ -516,21 +529,20 @@ class VideoMobject(ImageMobject):
             start_time=self.start_ms / 1000,
             end_time=None if self.end_ms is None else self.end_ms / 1000,
             close_at_end=self.close_at_end,
+            ignore_transparent=self._use_visible_bounds,
         )
-
-        # Close the previous decoder before adopting the reopened playback state
+    
+        # Close the previous playback resources before adopting the fresh decoder
         self.close()
-        # Keep the loaded audio when replacing the decoder's status
         fresh.status.audio = self.status.audio
         self.status = fresh.status
         self._stream_start = fresh._stream_start
         self.duration_ms = fresh.duration_ms
         self._playback_end_ms = fresh._playback_end_ms
-
-        # Replace the frame without changing this object's displayed geometry
-        self.pixel_array = fresh.pixel_array.copy()
-        self.orig_alpha_pixel_array = fresh.orig_alpha_pixel_array.copy()
-
+    
+        # Refresh through this object's frame conversion, including subclass behavior
+        self._sync_video_frame()
+    
         # Attach this object's updater and resume playback
         self.add_updater(self.video_updater)
         self.resume_updating()

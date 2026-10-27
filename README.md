@@ -59,7 +59,7 @@ another `VideoMobject` for independent playback.
 
 ## Other helpers
 
-- `McVideo`: A VideoMobject child that assumes your video has a grid of blocks parallel to the camera, for orthographic shots in minecraft. It gives you tools to measure the blocks in pixels and manim units with `vid.ge`
+- `BlockMapper`: measures a square block grid on an image or video. Provides block sizes, origins, centers, and pixel bounds. Measurements are captured at construction; scene coordinates follow the wrapped image's current geometry.
 
 
 
