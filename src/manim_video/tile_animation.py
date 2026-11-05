@@ -2,7 +2,7 @@ from collections.abc import Callable
 from itertools import pairwise
 
 import numpy as np
-from manim import DL, Animation, Camera, Group, ImageMobject, LaggedStart, Vector3D
+from manim import Animation, Camera, Group, ImageMobject, LaggedStart
 
 from .block_mapper import BlockMapper
 
@@ -52,7 +52,13 @@ def make_image_tiles(
     )
 
     # Snap final positions to output pixels without changing the source crops
-    if camera is not None:
+    if (
+        camera is not None
+        and camera.frame_width is not None
+        and camera.pixel_width is not None
+        and camera.frame_height is not None
+        and camera.pixel_height is not None
+    ):
         screen_points = camera.points_to_subpixel_coords(image, grid_points)
         adjustment = np.rint(screen_points) - screen_points
         grid_points[:, 0] += adjustment[:, 0] * camera.frame_width / camera.pixel_width
@@ -84,44 +90,6 @@ def make_image_tiles(
             tiles.add(tile)
 
     return tiles
-
-
-class TileOrder:
-    """Reusable tile ordering callbacks for TileAnimation."""
-
-    @staticmethod
-    def distance_from_bottom_left(tiles: Group) -> Group:
-        """Order tile centers by distance, then angle from 90 degrees to 0."""
-        # Measure positions from the bottom-left of the tile group's bounds
-        bottom_left = tiles.get_corner(DL)
-
-        def sort_key(tile):
-            offset = tile.get_center() - bottom_left
-            distance = np.linalg.norm(offset[:2])
-            angle = np.arctan2(offset[1], offset[0])
-            return distance, -angle
-
-        # Return the same tiles in their animation order
-        return Group(*sorted(tiles, key=sort_key))
-
-    @staticmethod
-    def distance_from_point(point: Vector3D) -> Callable[[Group], Group]:
-        # Store the reference position when creating the callback
-        origin = np.array(point, dtype=float).copy()
-
-        def order(tiles: Group) -> Group:
-            # Measure distance and angle from the supplied scene position
-            def sort_key(tile):
-                offset = tile.get_center() - origin
-                distance = np.linalg.norm(offset[:2])
-                angle = np.arctan2(offset[1], offset[0])
-                return distance, -angle
-
-            # Return the same tiles ordered nearest first
-            return Group(*sorted(tiles, key=sort_key))
-
-        return order
-
 
 class TileAnimation(LaggedStart):
     """Apply staggered animations to crops of an image.
@@ -196,7 +164,8 @@ class TileAnimation(LaggedStart):
                 *(
                     tile
                     for tile in self.tiles
-                    if np.count_nonzero(tile.pixel_array[:, :, 3] > 0)
+                    if isinstance(tile, ImageMobject)
+                    and np.count_nonzero(tile.pixel_array[:, :, 3] > 0)
                     / tile.pixel_array[:, :, 3].size
                     > 0.1
                 )
@@ -208,7 +177,11 @@ class TileAnimation(LaggedStart):
 
         # Let Manim stagger the caller's transition for each tile
         super().__init__(
-            *(animation_factory(tile) for tile in self.tiles),
+            *(
+                animation_factory(tile)
+                for tile in self.tiles
+                if isinstance(tile, ImageMobject)
+            ),
             group=self.tiles,
             lag_ratio=lag_ratio,
             run_time=run_time,
