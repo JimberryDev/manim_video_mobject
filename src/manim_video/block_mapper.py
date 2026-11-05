@@ -1,3 +1,6 @@
+import warnings
+from math import ceil
+
 import numpy as np
 from manim import ImageMobject
 from manim.typing import Vector3D
@@ -41,6 +44,9 @@ class BlockMapper:
             reference_row, reference_column, reference_blocks
         )
 
+        # Warn if the measured grid would contain unusually many blocks
+        self._warn_if_grid_large()
+
     def _resolve_reference(
         self,
         row: int | str | None,
@@ -50,6 +56,8 @@ class BlockMapper:
         visible = self.image.pixel_array[:, :, 3] > 0
         height, width = visible.shape
 
+        assert isinstance(height, int) and isinstance(width, int)
+
         if row is not None:
             # Resolve the bottom alias or a Python-style row index
             if row == "bottom":
@@ -57,7 +65,9 @@ class BlockMapper:
                 if rows.size == 0:
                     raise ValueError("The image is fully transparent")
                 row = int(rows[-1])
-            elif row < 0:
+            assert isinstance(row, int)
+
+            if row < 0:
                 row += height
 
             # Require a row inside the frame with some visible pixels
@@ -74,7 +84,9 @@ class BlockMapper:
             if columns.size == 0:
                 raise ValueError("The image is fully transparent")
             column = int(columns[0])
-        elif column < 0:
+        assert isinstance(column, int)
+
+        if column < 0:
             column += width
 
         # Require a column inside the frame with some visible pixels
@@ -99,6 +111,7 @@ class BlockMapper:
             positions = np.flatnonzero(visible[row, :])
             origin = (int(positions[0]), row + 1)
         else:
+            assert column is not None
             # Measure the vertical span and anchor below its left edge
             positions = np.flatnonzero(visible[:, column])
             origin = (column, int(positions[-1]) + 1)
@@ -110,6 +123,24 @@ class BlockMapper:
             raise ValueError("The measured block size is less than one pixel")
 
         return origin, block_size
+
+    def _warn_if_grid_large(self):
+        # Count grid cells, including transparent and partial cells
+        height, width = self.image.pixel_array.shape[:2]
+        block_size = self._block_size_px
+        offset_x = self._origin_px[0] % block_size
+        offset_y = self._origin_px[1] % block_size
+        columns = ceil((width - offset_x) / block_size) + int(offset_x != 0)
+        rows = ceil((height - offset_y) / block_size) + int(offset_y != 0)
+        total_blocks = columns * rows
+
+        # Warn when the grid exceeds 121 blocks
+        if total_blocks > 121:
+            warnings.warn(
+                f"The measured grid has {total_blocks} blocks "
+                f"({columns} columns x {rows} rows)",
+                stacklevel=3,
+            )
 
     def pixel_to_point(self, x: float, y: float) -> Vector3D:
         # Map source pixel boundaries onto the wrapped image's current geometry
