@@ -134,8 +134,9 @@ class BlockMapper:
         rows = ceil((height - offset_y) / block_size) + int(offset_y != 0)
         total_blocks = columns * rows
 
-        # Warn when the grid exceeds 121 blocks
-        if total_blocks > 121:
+        # Warn when the grid exceeds CONCERNING_AMOUNT_OF_BLOCKS
+        CONCERNING_AMOUNT_OF_BLOCKS = 1000
+        if total_blocks > CONCERNING_AMOUNT_OF_BLOCKS:
             warnings.warn(
                 f"The measured grid has {total_blocks} blocks "
                 f"({columns} columns x {rows} rows)",
