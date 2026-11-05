@@ -1,5 +1,4 @@
 import warnings
-from math import ceil
 
 import numpy as np
 from manim import ImageMobject
@@ -125,21 +124,30 @@ class BlockMapper:
         return origin, block_size
 
     def _warn_if_grid_large(self):
-        # Count grid cells, including transparent and partial cells
+        # Locate grid cells across the current image
         height, width = self.image.pixel_array.shape[:2]
         block_size = self._block_size_px
         offset_x = self._origin_px[0] % block_size
         offset_y = self._origin_px[1] % block_size
-        columns = ceil((width - offset_x) / block_size) + int(offset_x != 0)
-        rows = ceil((height - offset_y) / block_size) + int(offset_y != 0)
-        total_blocks = columns * rows
+
+        # Count only cells containing visible pixels
+        alpha = self.image.pixel_array[:, :, 3]
+        total_blocks = 0
+        for y in range(offset_y - block_size, height, block_size):
+            for x in range(offset_x - block_size, width, block_size):
+                cell = alpha[
+                    max(0, y):min(height, y + block_size),
+                    max(0, x):min(width, x + block_size),
+                ]
+                if np.any(cell > 0):
+                    total_blocks += 1
 
         # Warn when the grid exceeds CONCERNING_AMOUNT_OF_BLOCKS
-        CONCERNING_AMOUNT_OF_BLOCKS = 1000
+        CONCERNING_AMOUNT_OF_BLOCKS = 512
         if total_blocks > CONCERNING_AMOUNT_OF_BLOCKS:
             warnings.warn(
-                f"The measured grid has {total_blocks} blocks "
-                f"({columns} columns x {rows} rows)",
+                f"The measured grid has {total_blocks} visible blocks.\n"
+                "Did you choose the correct reference frame and block count?",
                 stacklevel=3,
             )
 
