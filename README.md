@@ -64,7 +64,6 @@ another `VideoMobject` for independent playback.
 - `BlockMapper`: measures a square block grid on an image or video. Provides block sizes, origins, centers, and pixel bounds. Measurements are captured at construction; scene coordinates follow the wrapped image's current geometry.
 
 
-
 - `TileAnimation` and `TileOrder`: staggered animations over image tiles
 - `Fix`: scene subclass that delivers the final playback update
 

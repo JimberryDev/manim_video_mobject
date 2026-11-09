@@ -1,12 +1,14 @@
-from collections.abc import Iterator
-from dataclasses import dataclass
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
 from typing import override
 
-import av
 import numpy as np
-from manim import ImageMobject, Scene, change_to_rgba_array
+from av import VideoFrame, open, time_base
+from av.container import InputContainer
+from av.video.stream import VideoStream
+from manim import ImageMobject, Mobject, Scene, change_to_rgba_array
 from manim.typing import Vector3D
 from PIL import Image
 from pydub import AudioSegment
@@ -14,12 +16,12 @@ from pydub import AudioSegment
 
 @dataclass
 class VideoStatus:
+    container: InputContainer
+    stream: VideoStream
+    frames: Iterator[VideoFrame] = field(init=False)
     time: float = 0
-    container: av.container.InputContainer | None = None
-    stream: av.video.stream.VideoStream | None = None
-    frames: Iterator[av.VideoFrame] | None = None
-    current_frame: av.VideoFrame | None = None
-    next_frame: av.VideoFrame | None = None
+    current_frame: VideoFrame | None = None
+    next_frame: VideoFrame | None = None
     exhausted: bool = False
     closed: bool = False
 
@@ -32,6 +34,10 @@ class VideoStatus:
     audio_scene_start: float = 0
     audio_source_start: float = 0
     audio_speed: float = 1
+
+    def __post_init__(self) -> None:
+        # Prepare decoding from the selected video stream
+        self.frames = iter(self.container.decode(self.stream))
 
     def __deepcopy__(self, memo):
         # Keep copied mobjects attached to the same decoder and playback clock
@@ -90,16 +96,16 @@ class VideoMobject(ImageMobject):
         self,
         file_path: str | Path,
         scene: Scene,
-        imageops=None,
-        silent=False,
-        speed=1.0,
-        loop=False,
-        start_time=0.0,
-        end_time=None,
+        imageops: Callable[[Image.Image], Image.Image] | None = None,
+        silent: bool = False,
+        speed: float = 1.0,
+        loop: bool = False,
+        start_time: float = 0.0,
+        end_time: float | None = None,
         close_at_end: bool = True,
         ignore_transparent: bool = True,
         **kwargs,
-    ):
+    ) -> None:
         # Validate the interval and forward playback speed
         if not isfinite(start_time) or start_time < 0:
             raise ValueError("start_time must be finite and nonnegative")
@@ -114,17 +120,23 @@ class VideoMobject(ImageMobject):
         self.loop = loop
         self.close_at_end = close_at_end
         self.start_ms = start_time * 1000
-        self.end_ms = None if end_time is None else end_time * 1000
-        self.status = VideoStatus(time=self.start_ms)
+        self.end_ms: float | None = None if end_time is None else end_time * 1000
         self.silent = silent
         self.scene = scene
 
         # Open the decoder and release it if initialization fails
-        container = av.open(file_path)
-        self.status.container = container
+        container = open(file_path)
         try:
             if not container.streams.video:
                 raise ValueError("The file contains no video stream")
+
+            # Initialize shared playback with its decoder and video stream
+            stream = container.streams.video[0]
+            self.status = VideoStatus(
+                container=container,
+                stream=stream,
+                time=self.start_ms,
+            )
 
             # Play silently if the source has no audio track
             if not container.streams.audio:
@@ -134,19 +146,17 @@ class VideoMobject(ImageMobject):
             if not self.silent:
                 self.status.audio = AudioSegment.from_file(self.file_path)
 
-            stream = container.streams.video[0]
-            self.status.stream = stream
             self._stream_start = stream.start_time or 0
 
             # Prefer video duration over the duration of other container streams
-            self.duration_ms = None
+            self.duration_ms: float | None = None
             if stream.duration is not None:
                 self.duration_ms = float(stream.duration * stream.time_base) * 1000
             elif container.duration is not None:
-                self.duration_ms = container.duration / av.time_base * 1000
+                self.duration_ms = container.duration / time_base * 1000
 
             # Stop at the natural video end if it precedes the requested end
-            self._playback_end_ms = self.end_ms
+            self._playback_end_ms: float | None = self.end_ms
             if self.duration_ms is not None:
                 if self._playback_end_ms is None:
                     self._playback_end_ms = self.duration_ms
@@ -160,13 +170,14 @@ class VideoMobject(ImageMobject):
             if frame is None:
                 raise ValueError("No video frame is available at start_time")
 
-            super().__init__(self._frame_image(frame), **kwargs)
+            super().__init__(np.array(self._frame_image(frame)), **kwargs)
 
             # Ignore transparent padding in bounds after initial image sizing
             self._use_visible_bounds = ignore_transparent
         except Exception:
             container.close()
-            self.status.closed = True
+            if hasattr(self, "status"):
+                self.status.closed = True
             raise
 
         # Advance playback whenever Manim updates this mobject
@@ -296,7 +307,7 @@ class VideoMobject(ImageMobject):
         return self._speed
 
     @speed.setter
-    def speed(self, value: float):
+    def speed(self, value: float) -> None:
         # Validate before changing playback or committing audio
         if not isfinite(value) or value < 0:
             raise ValueError("speed must be finite and nonnegative")
@@ -313,21 +324,21 @@ class VideoMobject(ImageMobject):
         if not self.updating_suspended and not self.status.closed:
             self._start_audio()
 
-    def _frame_time_ms(self, frame):
+    def _frame_time_ms(self, frame: VideoFrame) -> float:
         # Normalize source timestamps so playback starts at video time zero
         if frame.pts is None:
             raise ValueError("The video frame has no presentation timestamp")
         start_seconds = float(self._stream_start * self.status.stream.time_base)
         return (float(frame.pts * frame.time_base) - start_seconds) * 1000
 
-    def _next_frame(self):
+    def _next_frame(self) -> VideoFrame | None:
         # Mark the natural end when the decoder runs out of frames
         frame = next(self.status.frames, None)
         if frame is None:
             self.status.exhausted = True
         return frame
 
-    def _read_frame(self, time_ms, *, seek=False):
+    def _read_frame(self, time_ms: float, *, seek: bool = False) -> VideoFrame | None:
         status = self.status
         stream = status.stream
 
@@ -353,7 +364,7 @@ class VideoMobject(ImageMobject):
 
         return status.current_frame
 
-    def _frame_image(self, frame):
+    def _frame_image(self, frame: VideoFrame) -> Image.Image:
         # Preserve the decoded alpha channel all the way into the PIL image
         img = Image.fromarray(frame.to_ndarray(format="rgba"))
         if self.imageops is not None:
@@ -380,7 +391,7 @@ class VideoMobject(ImageMobject):
 
         return remaining_ms / (1000 * self.speed)
 
-    def _sync_video_frame(self):
+    def _sync_video_frame(self) -> None:
         # Display the shared frame using this object's image operations
         frame = self.status.current_frame
         if frame is None:
@@ -397,7 +408,9 @@ class VideoMobject(ImageMobject):
             self.orig_alpha_pixel_array * self.stroke_opacity
         ).astype(self.pixel_array_dtype)
 
-    def video_updater(self, mobj, dt):
+    def video_updater(self, mobj: Mobject, dt: float) -> None:
+        # Require a video object before accessing playback state
+        assert isinstance(mobj, VideoMobject)
         status = mobj.status
 
         # Display the shared final frame even if another copy closed the decoder
@@ -445,7 +458,11 @@ class VideoMobject(ImageMobject):
                 finished = True
 
         # Keep the end exclusive while still decoding the final interval frame
-        sample_time = np.nextafter(end_ms, -np.inf) if finished else next_time
+        if finished:
+            assert end_ms is not None
+            sample_time = np.nextafter(end_ms, -np.inf)
+        else:
+            sample_time = next_time
         frame = mobj._read_frame(sample_time, seek=seek)
         status.time = next_time
 
@@ -469,6 +486,7 @@ class VideoMobject(ImageMobject):
 
         # Commit audio
         if finished:
+            assert mobj._playback_end_ms is not None
             mobj._stop_audio(source_time=mobj._playback_end_ms / 1000)
 
             # Release the decoder after presenting the final frame
@@ -547,7 +565,7 @@ class VideoMobject(ImageMobject):
         self.add_updater(self.video_updater)
         self.resume_updating()
 
-    def close(self):
+    def close(self) -> None:
         """Stop updating this object and close its shared video decoder."""
         # Release the container once, including when copies share this status
         self._stop_audio()
@@ -556,7 +574,12 @@ class VideoMobject(ImageMobject):
             self.status.container.close()
             self.status.closed = True
 
-    def _start_audio(self, *, scene_time=None, source_time=None):
+    def _start_audio(
+        self,
+        *,
+        scene_time: float | None = None,
+        source_time: float | None = None,
+    ) -> None:
         # Leave an existing interval untouched and skip inactive playback
         if (
             self.silent
@@ -586,9 +609,9 @@ class VideoMobject(ImageMobject):
         self.status.audio_speed = self.speed
         self.status.audio_recording = True
 
-    def _stop_audio(self, *, source_time=None):
+    def _stop_audio(self, *, source_time: float | None = None) -> None:
         # Skip intervals that have already been committed
-        if not self.status.audio_recording:
+        if not self.status.audio_recording or self.status.audio is None:
             return
 
         # Use the supplied source endpoint or the current video position
@@ -625,7 +648,7 @@ class VideoMobject(ImageMobject):
         # Mark the interval committed so repeated stops cannot duplicate it
         self.status.audio_recording = False
 
-    def _loop_audio(self, next_time: float):
+    def _loop_audio(self, next_time: float) -> None:
         # Skip audio work when no interval is open
         if self.silent or not self.status.audio_recording:
             return
@@ -653,14 +676,27 @@ class VideoMobject(ImageMobject):
             # Carry the remaining source time into the next pass
             next_time -= duration_ms
 
-
-    def crop(self, left: int, top: int, right: int, bottom: int) -> VideoMobject:
-        """Crop to absolute pixel bounds while preserving retained content placement.
+    def crop(
+        self,
+        left: int | None = None,
+        top: int | None = None,
+        right: int | None = None,
+        bottom: int | None = None,
+    ) -> VideoMobject:
+        """Crop to pixel bounds, leaving unspecified edges unchanged.
 
         Coordinates refer to the current image after existing image operations.
         Right and bottom are exclusive. Updates the displayed image immediately.
         Return self for chaining.
         """
+        # Keep the current image boundary for each unspecified edge
+        height, width = self.pixel_array.shape[:2]
+        assert isinstance(height, int) and isinstance(width, int)
+        left = 0 if left is None else left
+        top = 0 if top is None else top
+        right = width if right is None else right
+        bottom = height if bottom is None else bottom
+
         # Require a nonempty rectangle inside the current image
         height, width = self.pixel_array.shape[:2]
         if not (0 <= left < right <= width and 0 <= top < bottom <= height):
@@ -681,7 +717,7 @@ class VideoMobject(ImageMobject):
         # Keep existing image operations before cropping future frames
         previous_imageops = self.imageops
 
-        def cropped_imageops(image):
+        def cropped_imageops(image: Image.Image) -> Image.Image:
             if previous_imageops is not None:
                 image = previous_imageops(image)
             return image.crop((left, top, right, bottom))
@@ -719,4 +755,10 @@ class VideoMobject(ImageMobject):
         return result
 
     def get_current_frame(self) -> ImageMobject:
-        return
+        # Copy the displayed pixels into an independent still image
+        image = ImageMobject(self.pixel_array.copy())
+
+        # Preserve the video's current geometry and drawing order
+        image.set_points(self.points.copy())
+        image.set_z_index(self.z_index)
+        return image
