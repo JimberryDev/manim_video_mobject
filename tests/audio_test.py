@@ -22,13 +22,13 @@ class AudioTest(Scene):
         # Start playback automatically and listen for normal audio
         self._show_stage("Normal playback")
         self.wait(5)
-        assert video.status.audio_recording
+        assert video.status.audio_interval is not None
 
         # Repeated play calls must preserve the already open audio interval
-        interval_start = video.status.audio_scene_start
+        interval = video.status.audio_interval
         video.play()
         video.play()
-        assert video.status.audio_scene_start == interval_start
+        assert video.status.audio_interval is interval
 
         # Pause twice and confirm that the source clock stays still
         self._show_stage("Paused: expect silence")
@@ -37,7 +37,7 @@ class AudioTest(Scene):
         paused_time = video.status.time
         self.wait(2.5)
         assert video.status.time == paused_time
-        assert not video.status.audio_recording
+        assert video.status.audio_interval is None
 
         # Resume and listen for audio continuing from the paused position
         self._show_stage("Resume at normal speed")
@@ -58,7 +58,7 @@ class AudioTest(Scene):
         stationary_time = video.status.time
         self.wait(2.5)
         assert video.status.time == stationary_time
-        assert not video.status.audio_recording
+        assert video.status.audio_interval is None
 
         # Seek during playback and listen for audio jumping to the same position
         self._show_stage("Seek to source second 10")
@@ -73,7 +73,7 @@ class AudioTest(Scene):
         self.wait(2.5)
         assert video.updating_suspended
         assert video.status.time == 5000
-        assert not video.status.audio_recording
+        assert video.status.audio_interval is None
 
         # Restart should reuse the loaded audio and resume from the selected start
         self._show_stage("Restart from the beginning")
@@ -87,27 +87,27 @@ class AudioTest(Scene):
         video.seek(37.5)
         self.wait(video.remaining_time() + frame_margin)
         assert not video.status.closed
-        assert not video.status.audio_recording
+        assert video.status.audio_interval is None
 
         # Play and speed changes must not reopen completed audio
         video.play()
         video.speed = 2
         self.wait(2.5)
-        assert not video.status.audio_recording
+        assert video.status.audio_interval is None
 
         # Seek backward after completion and verify that playback can start again
         self._show_stage("Seek backward after completion")
         video.speed = 1
         video.seek(5)
         self.wait(2.5)
-        assert video.status.audio_recording
+        assert video.status.audio_interval is not None
 
         # Remove the clip and explicitly commit audio and close its decoder
         self.remove(video)
         video.close()
         video.close()
         assert video.status.closed
-        assert not video.status.audio_recording
+        assert video.status.audio_interval is None
 
         # Cross several loop boundaries and listen for missing or duplicated audio
         self._show_stage("Loop source seconds 0 to 3.75")
@@ -132,11 +132,11 @@ class AudioTest(Scene):
         self.add(ending)
         self.wait(ending.remaining_time() + frame_margin)
         assert ending.status.closed
-        assert not ending.status.audio_recording
+        assert ending.status.audio_interval is None
         ending.seek(0)
         self.wait(1.25)
         assert not ending.status.closed
-        assert ending.status.audio_recording
+        assert ending.status.audio_interval is not None
         self.remove(ending)
         ending.close()
 

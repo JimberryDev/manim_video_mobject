@@ -706,6 +706,7 @@ class VideoMobject(ImageMobject):
         """Crop to pixel bounds, leaving unspecified edges unchanged.
 
         Coordinates refer to the current image after existing image operations.
+        Negative bounds count backward from the right or bottom edge.
         Right and bottom are exclusive. Updates the displayed image immediately.
         Return self for chaining.
         """
@@ -716,6 +717,12 @@ class VideoMobject(ImageMobject):
         top = 0 if top is None else top
         right = width if right is None else right
         bottom = height if bottom is None else bottom
+
+        # Resolve negative bounds from the current image's far edges
+        left = width + left if left < 0 else left
+        right = width + right if right < 0 else right
+        top = height + top if top < 0 else top
+        bottom = height + bottom if bottom < 0 else bottom
 
         # Require a nonempty rectangle inside the current image
         height, width = self.pixel_array.shape[:2]
