@@ -50,3 +50,17 @@ class TileOrder:
             return Group(*reversed(ordered))
 
         return order
+
+
+# Expose ordering callbacks directly for function imports
+distance_from_bottom_left = TileOrder.distance_from_bottom_left
+distance_from_point = TileOrder.distance_from_point
+reverse = TileOrder.reverse
+
+# Define the public module exports
+__all__ = [
+    "TileOrder",
+    "distance_from_bottom_left",
+    "distance_from_point",
+    "reverse",
+]

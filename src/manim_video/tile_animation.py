@@ -91,6 +91,7 @@ def make_image_tiles(
 
     return tiles
 
+
 class TileAnimation(LaggedStart):
     """Apply staggered animations to crops of an image.
 

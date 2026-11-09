@@ -16,6 +16,23 @@ class BlockMapper:
         reference_column: int | str | None = None,
         reference_blocks: int,
     ):
+        """Measure the grid from the image's current pixels.
+
+        Parameters
+        ----------
+        image
+            Image or video to measure without taking ownership of playback
+        reference_row
+            Pixel row index, "top", or "bottom"
+            Negative indices count backward from the frame's bottom edge
+        reference_column
+            Pixel column index, "left", or "right"
+            Negative indices count backward from the frame's right edge
+            Specify exactly one of reference_row and reference_column
+        reference_blocks
+            Positive number of square blocks spanning the visible pixels
+            along the selected reference line
+        """
         # Require exactly one reference row or column
         if (reference_row is None) == (reference_column is None):
             raise ValueError("Specify exactly one of reference_row or reference_column")
@@ -26,11 +43,19 @@ class BlockMapper:
 
         # Accept pixel indices and the supported edge aliases
         if reference_row is not None:
-            if type(reference_row) is not int and reference_row != "bottom":
-                raise ValueError("reference_row must be an integer or 'bottom'")
+            if type(reference_row) is not int and reference_row not in (
+                "top",
+                "bottom",
+            ):
+                raise ValueError("reference_row must be an integer, 'top', or 'bottom'")
         else:
-            if type(reference_column) is not int and reference_column != "left":
-                raise ValueError("reference_column must be an integer or 'left'")
+            if type(reference_column) is not int and reference_column not in (
+                "left",
+                "right",
+            ):
+                raise ValueError(
+                    "reference_column must be an integer, 'left', or 'right'"
+                )
 
         # Keep the wrapped image without taking ownership of its playback
         self.image = image
@@ -58,12 +83,12 @@ class BlockMapper:
         assert isinstance(height, int) and isinstance(width, int)
 
         if row is not None:
-            # Resolve the bottom alias or a Python-style row index
-            if row == "bottom":
+            # Resolve a visible row edge or a Python-style row index
+            if row in ("top", "bottom"):
                 rows = np.flatnonzero(visible.any(axis=1))
                 if rows.size == 0:
                     raise ValueError("The image is fully transparent")
-                row = int(rows[-1])
+                row = int(rows[0] if row == "top" else rows[-1])
             assert isinstance(row, int)
 
             if row < 0:
@@ -77,12 +102,12 @@ class BlockMapper:
 
             return row, None
 
-        # Resolve the left alias or a Python-style column index
-        if column == "left":
+        # Resolve a visible column edge or a Python-style column index
+        if column in ("left", "right"):
             columns = np.flatnonzero(visible.any(axis=0))
             if columns.size == 0:
                 raise ValueError("The image is fully transparent")
-            column = int(columns[0])
+            column = int(columns[0] if column == "left" else columns[-1])
         assert isinstance(column, int)
 
         if column < 0:
@@ -136,8 +161,8 @@ class BlockMapper:
         for y in range(offset_y - block_size, height, block_size):
             for x in range(offset_x - block_size, width, block_size):
                 cell = alpha[
-                    max(0, y):min(height, y + block_size),
-                    max(0, x):min(width, x + block_size),
+                    max(0, y) : min(height, y + block_size),
+                    max(0, x) : min(width, x + block_size),
                 ]
                 if np.any(cell > 0):
                     total_blocks += 1
@@ -192,9 +217,7 @@ class BlockMapper:
             origin_y - (y + 0.5) * size,
         )
 
-    def get_block_bounds_px(
-        self, x: int, y: int
-    ) -> tuple[int, int, int, int]:
+    def get_block_bounds_px(self, x: int, y: int) -> tuple[int, int, int, int]:
         # Find the block boundaries, with block Y increasing upward
         origin_x, origin_y = self.get_origin_px()
         size = self.get_block_size_px()
