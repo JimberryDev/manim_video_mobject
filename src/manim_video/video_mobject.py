@@ -15,7 +15,28 @@ from pydub import AudioSegment
 
 
 @dataclass
+class AudioInterval:
+    """Track one continuous stretch of audible playback.
+
+    Holds the loaded audio, its starting positions in scene and source time
+    in seconds, and the playback speed used until the interval is committed.
+    """
+
+    audio: AudioSegment
+    scene_start: float
+    source_start: float
+    speed: float
+
+
+@dataclass
 class VideoStatus:
+    """Hold decoder resources and playback state shared by copied videos.
+
+    Tracks the source position in milliseconds, buffered frames, and audio
+    intervals. Deep copies share this status so playback advances only once
+    per scene timestamp; clone() creates an independent status.
+    """
+
     container: InputContainer
     stream: VideoStream
     frames: Iterator[VideoFrame] = field(init=False)
@@ -30,10 +51,7 @@ class VideoStatus:
 
     # Share source audio and its open interval with copied mobjects
     audio: AudioSegment | None = None
-    audio_recording: bool = False
-    audio_scene_start: float = 0
-    audio_source_start: float = 0
-    audio_speed: float = 1
+    audio_interval: AudioInterval | None = None
 
     def __post_init__(self) -> None:
         # Prepare decoding from the selected video stream
@@ -583,7 +601,8 @@ class VideoMobject(ImageMobject):
         # Leave an existing interval untouched and skip inactive playback
         if (
             self.silent
-            or self.status.audio_recording
+            or self.status.audio_interval is not None
+            or self.status.audio is None
             or self.speed == 0
             or self.status.closed
             or self.updating_suspended
@@ -600,57 +619,55 @@ class VideoMobject(ImageMobject):
             return
 
         # Store both clocks in seconds to match Manim's audio timeline
-        self.status.audio_scene_start = (
-            self.scene.time if scene_time is None else scene_time
+        # Keep the starting speed because elapsed times can introduce rounding errors
+        self.status.audio_interval = AudioInterval(
+            audio=self.status.audio,
+            scene_start=self.scene.time if scene_time is None else scene_time,
+            source_start=source_start,
+            speed=self.speed,
         )
-        self.status.audio_source_start = source_start
-
-        # Store speed because rounding makes calculating it from elapsed times unreliable
-        self.status.audio_speed = self.speed
-        self.status.audio_recording = True
 
     def _stop_audio(self, *, source_time: float | None = None) -> None:
         # Skip intervals that have already been committed
-        if not self.status.audio_recording or self.status.audio is None:
+        interval = self.status.audio_interval
+        if interval is None:
             return
 
         # Use the supplied source endpoint or the current video position
         source_end = self.status.time / 1000 if source_time is None else source_time
-        source_duration = source_end - self.status.audio_source_start
+        source_duration = source_end - interval.source_start
 
         # Discard intervals where no playback time elapsed
         if source_duration <= 0:
-            self.status.audio_recording = False
+            self.status.audio_interval = None
             return
 
         # Select the source samples consumed during this interval
-        start_sample = round(
-            self.status.audio_source_start * self.status.audio.frame_rate
-        )
-        end_sample = round(source_end * self.status.audio.frame_rate)
-        segment = self.status.audio.get_sample_slice(start_sample, end_sample)
+        start_sample = round(interval.source_start * interval.audio.frame_rate)
+        end_sample = round(source_end * interval.audio.frame_rate)
+        segment = interval.audio.get_sample_slice(start_sample, end_sample)
 
         # Use the speed recorded at the start of the interval
-        playback_rate = max(1, round(segment.frame_rate * self.status.audio_speed))
+        playback_rate = max(1, round(segment.frame_rate * interval.speed))
 
         # Match playback speed, changing pitch along with it
         segment = segment._spawn(
             segment.raw_data,
             overrides={"frame_rate": playback_rate},
-        ).set_frame_rate(self.status.audio.frame_rate)
+        ).set_frame_rate(interval.audio.frame_rate)
 
         # Commit the audio at the scene time where playback began
         self.scene.renderer.file_writer.add_audio_segment(
             segment,
-            time=self.status.audio_scene_start,
+            time=interval.scene_start,
         )
 
         # Mark the interval committed so repeated stops cannot duplicate it
-        self.status.audio_recording = False
+        self.status.audio_interval = None
 
     def _loop_audio(self, next_time: float) -> None:
         # Skip audio work when no interval is open
-        if self.silent or not self.status.audio_recording:
+        if self.silent or self.status.audio_interval is None:
             return
 
         # Match the video updater's source clock in milliseconds
@@ -659,11 +676,15 @@ class VideoMobject(ImageMobject):
 
         # Handle every loop crossed by this update
         while next_time >= end_ms:
+            # Read the new interval again after each completed loop
+            interval = self.status.audio_interval
+            if interval is None:
+                return
+
             # Place the next pass directly after the current audio interval
             next_audio_start = (
-                self.status.audio_scene_start
-                + (end_ms / 1000 - self.status.audio_source_start)
-                / self.status.audio_speed
+                interval.scene_start
+                + (end_ms / 1000 - interval.source_start) / interval.speed
             )
 
             # Commit through the loop end and begin again at the loop start
