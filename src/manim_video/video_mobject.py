@@ -467,7 +467,7 @@ class VideoMobject(ImageMobject):
         # Wrap overshoot into the interval or select its final frame
         if end_ms is not None and next_time >= end_ms:
             if mobj.loop:
-                mobj._loop_audio(next_time)
+                mobj._loop_audio(next_time, end_ms=end_ms)
                 duration = end_ms - mobj.start_ms
                 next_time = mobj.start_ms + (next_time - mobj.start_ms) % duration
                 seek = True
@@ -665,13 +665,12 @@ class VideoMobject(ImageMobject):
         # Mark the interval committed so repeated stops cannot duplicate it
         self.status.audio_interval = None
 
-    def _loop_audio(self, next_time: float) -> None:
+    def _loop_audio(self, next_time: float, *, end_ms: float) -> None:
         # Skip audio work when no interval is open
         if self.silent or self.status.audio_interval is None:
             return
 
         # Match the video updater's source clock in milliseconds
-        end_ms = self._playback_end_ms
         duration_ms = end_ms - self.start_ms
 
         # Handle every loop crossed by this update
