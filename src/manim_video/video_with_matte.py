@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Self
 
 from manim import Scene
 from PIL import Image
@@ -94,7 +95,7 @@ class VideoWithMatte(VideoMobject):
 
         return image
 
-    def clone(self) -> VideoWithMatte:
+    def clone(self) -> Self:
         # Clone the main video with its own decoder and playback state
         cloned = super().clone()
 

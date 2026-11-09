@@ -2,7 +2,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from math import isfinite
 from pathlib import Path
-from typing import override
+from typing import Self, override
 
 import numpy as np
 from av import VideoFrame, open, time_base
@@ -264,7 +264,7 @@ class VideoMobject(ImageMobject):
         memo[id(self.scene)] = self.scene
         return super().__deepcopy__(memo)
 
-    def clone(self) -> VideoMobject:
+    def clone(self) -> Self:
         """Copy this video with independent decoding and playback state."""
         # Copy geometry, attached objects, and subclass-specific attributes
         cloned = self.copy()
