@@ -202,7 +202,7 @@ class TileAnimation(LaggedStart):
             scene.remove(self.tiles, *self.tiles)
             scene.add(self.image)
         
-        if self.remover:
+        if self.is_remover():
             scene.remove(self.image)
 
             # Commit audio so far if possible
