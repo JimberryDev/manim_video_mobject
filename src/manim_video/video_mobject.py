@@ -409,6 +409,53 @@ class VideoMobject(ImageMobject):
 
         return remaining_ms / (1000 * self.speed)
 
+    def remaining_time_until(self, timestamp: float) -> float:
+        """Return scene seconds until an absolute source timestamp in seconds.
+
+        Targets already reached return zero, including during looping playback.
+        Future targets at zero speed return infinity.
+        Assumes playback is active and speed stays unchanged during the wait.
+        """
+        # Require a finite timestamp at or after the selected source start
+        target_ms = timestamp * 1000
+        if not isfinite(target_ms) or target_ms < self.start_ms:
+            raise ValueError(
+                "timestamp must be finite and at or after start_time"
+            )
+
+        # Allow the endpoint itself so callers can wait for completion
+        end_ms = self._playback_end_ms
+        if end_ms is not None and target_ms > end_ms:
+            raise ValueError("timestamp must not exceed the playback end")
+
+        # Past targets need no further scene time in the current pass
+        remaining_ms = max(0.0, target_ms - self.status.time)
+        if remaining_ms == 0:
+            return 0.0
+
+        # Convert source time into scene time using the current playback speed
+        if self.speed == 0:
+            return float("inf")
+        return remaining_ms / (1000 * self.speed)
+
+    def remaining_time_until_frame(self, frame_index: int) -> float:
+        """Return scene seconds until a zero-based source frame index.
+
+        Frame indices refer to the full source, regardless of start_time.
+        Uses average frame rate and assumes constant-frame-rate video.
+        Variable-frame-rate sources may produce approximate timing.
+        """
+        # Convert the frame index using the source video's frame rate
+        rate = self.status.stream.average_rate
+        if rate is None:
+            raise ValueError("Cannot determine the video's frame rate")
+        fps = float(rate)
+        if not isfinite(fps) or fps <= 0:
+            raise ValueError("Cannot determine the video's frame rate")
+
+        # Reuse timestamp validation and playback-speed calculations
+        return self.remaining_time_until(frame_index / fps)
+
     def _sync_video_frame(self) -> None:
         # Display the shared frame using this object's image operations
         frame = self.status.current_frame
@@ -626,6 +673,10 @@ class VideoMobject(ImageMobject):
             source_start=source_start,
             speed=self.speed,
         )
+        
+    def commit_audio_so_far(self):
+        self._stop_audio()
+        self._start_audio()
 
     def _stop_audio(self, *, source_time: float | None = None) -> None:
         # Skip intervals that have already been committed

@@ -201,3 +201,12 @@ class TileAnimation(LaggedStart):
         if self.restore_original:
             scene.remove(self.tiles, *self.tiles)
             scene.add(self.image)
+        
+        if self.remover:
+            scene.remove(self.image)
+
+            # Commit audio so far if possible
+            commit = getattr(self.image, "commit_audio_so_far", None)
+            if callable(commit):
+                self.image.commit_audio_so_far()
+            
