@@ -127,6 +127,9 @@ class TileAnimation(LaggedStart):
         Optional fixed Cairo camera used to snap assembled tile boundaries
         to output pixels, slightly adjusting geometry while keeping crops intact
         Camera motion or later scaling can invalidate the alignment
+    tile_predicate
+        Optional predicate to choose the tiles to be animated. It should accept
+        an ImageMobject, the tile, and return True if to include or False if not.
     **kwargs
         Additional arguments passed to LaggedStart
     """
@@ -144,6 +147,7 @@ class TileAnimation(LaggedStart):
         ignore_empty: bool = True,
         tile_order: Callable[[Group], Group] | None = None,
         camera: Camera | None = None,
+        tile_predicate: Callable[[ImageMobject], bool] = lambda _: True,
         **kwargs,
     ):
         # Use the mapper's image and measured block grid when supplied
@@ -166,6 +170,7 @@ class TileAnimation(LaggedStart):
                     tile
                     for tile in self.tiles
                     if isinstance(tile, ImageMobject)
+                    and tile_predicate(tile)
                     and np.count_nonzero(tile.pixel_array[:, :, 3] > 0)
                     / tile.pixel_array[:, :, 3].size
                     > 0.1
@@ -201,7 +206,7 @@ class TileAnimation(LaggedStart):
         if self.restore_original:
             scene.remove(self.tiles, *self.tiles)
             scene.add(self.image)
-        
+
         if self.is_remover():
             scene.remove(self.image)
 
@@ -209,4 +214,3 @@ class TileAnimation(LaggedStart):
             commit = getattr(self.image, "commit_audio_so_far", None)
             if callable(commit):
                 self.image.commit_audio_so_far()
-            
