@@ -11,10 +11,10 @@ class BlockMapper:
     def __init__(
         self,
         image: ImageMobject,
+        reference_blocks: int,
         *,
         reference_row: int | str | None = None,
         reference_column: int | str | None = None,
-        reference_blocks: int,
     ):
         """Measure the grid from the image's current pixels.
 

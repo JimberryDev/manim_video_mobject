@@ -473,6 +473,11 @@ class VideoMobject(ImageMobject):
             self.orig_alpha_pixel_array * self.stroke_opacity
         ).astype(self.pixel_array_dtype)
 
+    def refresh(self) -> Self:
+        # Display the shared frame without advancing playback or changing audio
+        self._sync_video_frame()
+        return self
+
     def video_updater(self, mobj: Mobject, dt: float) -> None:
         # Require a video object before accessing playback state
         assert isinstance(mobj, VideoMobject)
@@ -558,11 +563,11 @@ class VideoMobject(ImageMobject):
             if mobj.close_at_end:
                 mobj.close()
 
-    def seek(self, time: float) -> None:
+    def seek(self, time_s: float) -> Self:
         """Display an absolute source time in seconds, preserving pause state."""
         # Validate before interrupting the current playback interval
-        target_ms = time * 1000
-        if not isfinite(time) or target_ms < self.start_ms:
+        target_ms = time_s * 1000
+        if not isfinite(time_s) or target_ms < self.start_ms:
             raise ValueError("Seek time must be finite and at or after start_time")
         if self._playback_end_ms is not None and target_ms >= self._playback_end_ms:
             raise ValueError("Seek time must be before the playback end")
@@ -599,7 +604,13 @@ class VideoMobject(ImageMobject):
             else:
                 self._start_audio()
 
-    def restart(self) -> None:
+        return self
+
+    def skip(self, time_s: float) -> Self:
+        """Advance the playback time time_s seconds"""
+        return self.seek(self.status.time / 1000 + time_s)
+
+    def restart(self) -> Self:
         """Reopen the source and resume playback from the selected start."""
         # Prepare a fresh decoder and the selected interval's initial frame
         fresh = VideoMobject(
@@ -629,6 +640,8 @@ class VideoMobject(ImageMobject):
         # Attach this object's updater and resume playback
         self.add_updater(self.video_updater)
         self.resume_updating()
+        
+        return self
 
     def close(self) -> None:
         """Stop updating this object and close its shared video decoder."""
@@ -674,9 +687,11 @@ class VideoMobject(ImageMobject):
             speed=self.speed,
         )
         
-    def commit_audio_so_far(self):
+    def commit_audio_so_far(self) -> Self:
+        # Commit elapsed audio and start the next interval
         self._stop_audio()
         self._start_audio()
+        return self
 
     def _stop_audio(self, *, source_time: float | None = None) -> None:
         # Skip intervals that have already been committed
