@@ -3,6 +3,7 @@ from itertools import pairwise
 
 import numpy as np
 from manim import Animation, Camera, Group, ImageMobject, LaggedStart
+from PIL.Image import Resampling
 
 from .block_mapper import BlockMapper
 
@@ -73,7 +74,11 @@ def make_image_tiles(
     tiles = Group()
     for row, (y0, y1) in enumerate(pairwise(y_edges)):
         for column, (x0, x1) in enumerate(pairwise(x_edges)):
-            tile = ImageMobject(pixels[y0:y1, x0:x1].copy())
+            # Keep tile edges sharp with nearest-neighbor sampling
+            tile = ImageMobject(
+                pixels[y0:y1, x0:x1].copy(),
+                resampling_algorithm=Resampling.NEAREST,
+            )
             tile.set_z_index(image.z_index)
 
             # Match Manim's image corner order when mapping pixels to the scene

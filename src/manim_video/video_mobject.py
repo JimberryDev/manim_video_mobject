@@ -261,6 +261,7 @@ class VideoMobject(ImageMobject):
 
     def __deepcopy__(self, memo):
         # Keep copied videos attached to the original scene
+        self.refresh()
         memo[id(self.scene)] = self.scene
         return super().__deepcopy__(memo)
 
